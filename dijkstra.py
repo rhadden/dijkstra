@@ -109,6 +109,7 @@ class MinHeap():
 class PQArray():
     def __init__(self):
         self.q = []
+        self.c = 0
 
     def make_queue(self, arr):
         for n in arr:
@@ -116,22 +117,32 @@ class PQArray():
 
     def insert(self, a):
         self.q.append(a)
+        a.index = self.c
+        self.c += 1
 
     def pop(self):
+        min_dist = np.inf
         min_node = self.q[0]
         min_i = 0
-        for i in range(1, len(self.q)):
-            if self.q[i].dist < min_node.dist:
+        for i in range(0, len(self.q)):
+            if self.q[i] is not None and self.q[i].dist < min_dist:
+                min_dist = self.q[i].dist
                 min_node = self.q[i]
                 min_i = i
 
-        return self.q.pop(min_i)
+        self.c -= 1
+        self.q[min_i] = None
+        # if min_node is None:
+        #     print("NOPE")
+        return min_node
 
     def decrease_key(self, node, val):
-        node.dist = val
+        self.q[node.index].dist = val
+
+        #node.dist = val
 
     def count(self):
-        return len(self.q)
+        return self.c
 
 
 def gen_graph(n, p):
@@ -169,6 +180,11 @@ def dijkstra(adj_list, start, end, pq):
     while pq.count() > 0:
         # Next closest node
         u = pq.pop()
+        if u is None:
+            return
+
+        if u.dist == np.inf:
+            return
 
         # If the next closest node is further than the known distance to the destination
         # node, then end
@@ -226,7 +242,7 @@ def print_path(node):
 
 def test_dijkstras():
     import pickle
-    nodes = gen_graph(6, 0.5)
+    nodes = gen_graph(16, 0.5)
     # with open('bad_graph.pkl', 'rb') as g:
     #     nodes = pickle.load(g)
     print_graph(nodes)
@@ -245,13 +261,16 @@ def test_dijkstras():
 def test_performance(ps, node_counts, samples):
     import time
     import tqdm
-    for p in ps:
-        heap_runtime = np.zeros((node_counts.shape[0] * samples, 2))
-        array_runtime = np.zeros((node_counts.shape[0] * samples, 2))
+    heap_runtime = np.zeros((ps.shape[0], node_counts.shape[0], samples))
+    array_runtime = np.zeros((ps.shape[0], node_counts.shape[0], samples))
+    for a, p in tqdm.tqdm(enumerate(ps)):
+
+        # heap_runtime = np.zeros((node_counts.shape[0] * samples, 2))
+        # array_runtime = np.zeros((node_counts.shape[0] * samples, 2))
         run = 0
-        for count in node_counts:
+        for c, count in enumerate(node_counts):
             print("Count: {}".format(count))
-            for s in tqdm.tqdm(range(samples)):
+            for s in range(samples):
                 nodes = gen_graph(count, p)
 
                 start = random.randint(0, count - 1)
@@ -262,16 +281,18 @@ def test_performance(ps, node_counts, samples):
                 tik = time.time()
                 dijkstra(nodes, nodes[start], nodes[end], MinHeap())
                 tok = time.time() - tik
-                heap_runtime[run] = np.array([count, tok])
+                #heap_runtime[run] = np.array([count, tok])
+                heap_runtime[a, c, s] = tok
 
 
                 tik = time.time()
                 dijkstra(nodes, nodes[start], nodes[end], PQArray())
                 tok = time.time() - tik
-                array_runtime[run] = np.array([count, tok])
+                #array_runtime[run] = np.array([count, tok])
+                array_runtime[a, c, s] = tok
 
                 run += 1
-
+        '''
         fig, ax = plt.subplots()
 
         # ax.scatter(heap_runtime[:, 0], heap_runtime[:, 1], c='tab:blue', label='Min Heap', alpha=0.6)
@@ -309,7 +330,73 @@ def test_performance(ps, node_counts, samples):
 
         plt.savefig('p{}.png'.format(int(p * 100)))
         plt.show()
+        '''
 
+    np.save("heap_runtimes.npy", heap_runtime)
+    np.save("array_runtimes.npy", array_runtime)
+    plabels = ["{:03.2f}".format(p) for p in ps]
+    for c, n in enumerate(node_counts):
+        fig, ax = plt.subplots()
+        bp_heap_data = np.log(heap_runtime[:, c, :]).reshape((ps.shape[0], samples))
+        heap_data = [bp_heap_data[i, :] for i in range(ps.shape[0])]
+        bp_minheap = ax.boxplot(heap_data, showfliers=False, patch_artist=True, labels=plabels, widths=0.5,
+                                medianprops={'color': 'blue'})
+
+        bp_array_data = np.log(array_runtime[:, c, :]).reshape(ps.shape[0], samples)
+        bp_array = [bp_array_data[i, :] for i in range(ps.shape[0])]
+        bp_array = ax.boxplot(bp_array, showfliers=False, patch_artist=True, labels=plabels, widths=0.7)
+
+        for patch in bp_minheap['boxes']:
+            patch.set_facecolor('tab:blue')
+            patch.set_alpha(0.5)
+
+        for patch in bp_array['boxes']:
+            patch.set_facecolor('tab:orange')
+            patch.set_alpha(0.5)
+
+        ax.set_xlabel('P(E)')
+        ax.set_ylabel('log(t)')
+
+        ax.set_title('|V| = {}'.format(n))
+        plt.legend([bp_minheap['boxes'][0], bp_array['boxes'][0]], ["Min Heap", "Array"], loc='upper left')
+        plt.savefig('|V| = {}.png'.format(n))
+
+
+def plot_by_e():
+    heap_runtime = np.load("heap_runtimes.npy")
+    print(heap_runtime.shape)
+    array_runtime = np.load("array_runtimes.npy")
+    print(array_runtime.shape)
+    ps = np.linspace(0.1, 1.0, 10)
+    node_counts = np.power(2, np.arange(4, 11))
+    samples = 20
+
+    plabels = ["{:03.2f}".format(p) for p in ps]
+    for c, n in enumerate(node_counts):
+        fig, ax = plt.subplots()
+        bp_heap_data = np.log(heap_runtime[:, c, :]).reshape((ps.shape[0], samples))
+        heap_data = [bp_heap_data[i, :] for i in range(ps.shape[0])]
+        bp_minheap = ax.boxplot(heap_data, showfliers=False, patch_artist=True, labels=plabels, widths=0.5,
+                                medianprops={'color': 'blue'})
+
+        bp_array_data = np.log(array_runtime[:, c, :]).reshape(ps.shape[0], samples)
+        bp_array = [bp_array_data[i, :] for i in range(ps.shape[0])]
+        bp_array = ax.boxplot(bp_array, showfliers=False, patch_artist=True, labels=plabels, widths=0.7)
+
+        for patch in bp_minheap['boxes']:
+            patch.set_facecolor('tab:blue')
+            patch.set_alpha(0.5)
+
+        for patch in bp_array['boxes']:
+            patch.set_facecolor('tab:orange')
+            patch.set_alpha(0.5)
+
+        ax.set_xlabel('P(E)')
+        ax.set_ylabel('log(t)')
+
+        ax.set_title('|V| = {}'.format(n))
+        plt.legend([bp_minheap['boxes'][0], bp_array['boxes'][0]], ["Min Heap", "Array"], loc='upper left')
+        plt.savefig('|V| = {}.png'.format(n))
 
 
 if __name__== "__main__":
@@ -325,3 +412,4 @@ if __name__== "__main__":
     node_counts = np.power(2, np.arange(4, 11))
     samples = 20
     test_performance(ps, node_counts, samples)
+    #plot_by_e()
